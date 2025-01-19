@@ -87,14 +87,13 @@ export const signinUser = async (req, res) => {
       // creating a JWT u need the id of the user
       const { id } = user;
       user.password = undefined
-      user
+      
       const token = createJWT(id);
       res.status(201).json({
             status:"success",
             message:"Login Successfully",
             user,
             token
-
       })
   } catch (error) {
     // sever side issue
