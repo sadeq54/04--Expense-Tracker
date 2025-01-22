@@ -74,7 +74,7 @@ export const signinUser = async (req, res) => {
         message: "the email that you provided is incorrect!",
       });
     }
-
+    
     // u have to pass them in order
     const isMatch = comperePassword(password, user?.password);
 
@@ -86,6 +86,7 @@ export const signinUser = async (req, res) => {
     } 
       // creating a JWT u need the id of the user
       const { id } = user;
+
       user.password = undefined
       
       const token = createJWT(id);
