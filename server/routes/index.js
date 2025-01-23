@@ -17,8 +17,6 @@ export default router;
 
 
 
-
-
 // what is the routes :
 //Routes are needed to map URLs to specific handlers 
 // or functions in an application. 
