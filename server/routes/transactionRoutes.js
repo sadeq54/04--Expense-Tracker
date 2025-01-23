@@ -17,5 +17,3 @@ router.put("/transfer-money", authMiddleware, transferMoneyToAccount);
 
 export default router;
 
-
-
