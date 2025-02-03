@@ -1,4 +1,5 @@
 import db from "../libs/database.js";
+import { getMounth } from "../libs/index.js";
 
 /**
  * Get transactions for a user within a date range
@@ -20,6 +21,14 @@ export const getTransactions = async (req, res) => {
     // Extract userId from the decoded token in the middleware
     const { userId } = req.body.user;
 
+    // Validate userId
+    if (!userId) {
+      return res.status(403).json({
+        status: 'failed',
+        message: 'Invalid user ID!',
+      });
+    }
+
     // Set start and end dates for the query
     const startDate = new Date(df || sevenDaysAgo);
     const endDate = new Date(dt || new Date());
@@ -29,8 +38,6 @@ export const getTransactions = async (req, res) => {
       "SELECT * FROM tbltransaction WHERE user_id = $1 AND createdAt BETWEEN $2 AND $3 AND (description ILIKE '%' || $4 || '%' OR status ILIKE '%' || $4 || '%' OR source ILIKE '%' || $4 || '%') ORDER BY id DESC",
       [userId, startDate, endDate, s]
     );
-
-    
 
     res.status(200).json({
       status: 'success',
@@ -53,73 +60,88 @@ export const getTransactions = async (req, res) => {
  */
 export const getDashBoardInformation = async (req, res) => {
   try {
-   const {userId} = req.body.user
-   const totalExpense = 0
-    const totalIncome = 0
+    const { userId } = req.body.user;
 
-    const transactionRes = await db.query("select type, SUM(amount) as totalAmount  from tbltransaction where user_id = $1",
-      [userId]
-    )
-
-    const transactions = transactionRes.rows[0]
-    if (!transactions){
-      return  res.status(404).json({
+    // Validate userId
+    if (!userId) {
+      return res.status(403).json({
         status: 'failed',
-        message: 'there is no any transactions here!',
+        message: 'Invalid user ID!',
       });
     }
+
+    let totalExpense = 0;
+    let totalIncome = 0;
+
+    const transactionRes = await db.query(
+      "SELECT type, SUM(amount) as totalAmount FROM tbltransaction WHERE user_id = $1 GROUP BY type",
+      [userId]
+    );
+
+    const transactions = transactionRes.rows;
+    if (!transactions.length) {
+      return res.status(404).json({
+        status: 'failed',
+        message: 'There are no transactions!',
+      });
+    }
+
     transactions.forEach((transaction) => {
-      if (transaction.type == "amount"){
-        totalIncome += transaction.totalAmount
-      }else if (transaction.type == "expense"){
-        totalExpense += transaction.totalAmount
+      if (transaction.type === "income") {
+        totalIncome += transaction.totalAmount;
+      } else if (transaction.type === "expense") {
+        totalExpense += transaction.totalAmount;
       }
     });
-    const avalibleBalance = totalIncome - totalExpense
 
-    const year = new Date().getFullYear()
-    const strart_date = new Date(year , 0 , 1) // 1/1 first day of the year
-    const end_date = new Date(year , 11 , 31 , 23 , 59 , 59); // 31/12 last day of the year
+    const availableBalance = totalIncome - totalExpense;
 
-    // ask copilote "explain goup by with example use input output" if u do not get it 
-    const result = await db.query("SELECT type, SUM(amount) as totalAmount, EXTRACT(MOUNTH FROM createdAt) as mounth FROM tbltransaction WHERE user_id = $1 and createdAt BETWEEN $2 AND $3 GROUP BY EXTRACT(MOUNTH FROM createdAt) ",
-      [userId, strart_date, end_date]
-    )
+    const year = new Date().getFullYear();
+    const start_date = new Date(year, 0, 1); // 1/1 first day of the year
+    const end_date = new Date(year, 11, 31, 23, 59, 59); // 31/12 last day of the year
 
-      // orgnise data 
-      // - in map is callback function: here it is not used 
+    const result = await db.query(
+      "SELECT type, SUM(amount) as totalAmount, EXTRACT(MONTH FROM createdAt) as month FROM tbltransaction WHERE user_id = $1 AND createdAt BETWEEN $2 AND $3 GROUP BY type, EXTRACT(MONTH FROM createdAt)",
+      [userId, start_date, end_date]
+    );
+
+    // Organize data for chart
+    const data = new Array(12).fill(null).map((_, index) => {
+      const monthData = result.rows.filter(
+        (item) => parseInt(item.month) === index + 1
+      );
       
-      const data =  new Array(null).fill().map((_, index)=>{
-        const mountData = result.rows.filter(
-          (item)=> parseInt(item.mounth) == index +1
-        );
-      });
-      /* 
-      the form of the array 
-      [
-  [
-    { type: 'expense', totalAmount: 175, month: 1 },
-    { type: 'income', totalAmount: 200, month: 1 }
-  ],
-  [
-    { type: 'expense', totalAmount: 50, month: 2 },
-    { type: 'income', totalAmount: 150, month: 2 }
-  ],
-  [], // March
-  [], // April
-  [], // May
-  [], // June
-  [], // July
-  [], // August
-  [], // September
-  [], // October
-  [], // November
-  []  // December
-]
-      */
+      const income = monthData.find((item) => item.type === 'income')?.totalamount || 0;
+      const expense = monthData.find((item) => item.type === 'expense')?.totalamount || 0;
 
+      return {
+        label: getMounth(index),
+        income,
+        expense
+      };
+    });
 
-  
+    const lastTransactionResult = await db.query(
+      "SELECT * FROM tbltransaction WHERE user_id = $1 ORDER BY id DESC LIMIT 5",
+      [userId]
+    );
+    const lastTransaction = lastTransactionResult.rows;
+
+    const lastAccountRes = await db.query(
+      "SELECT * FROM tblaccount WHERE user_id = $1 ORDER BY id DESC LIMIT 4",
+      [userId]
+    );
+    const lastAccount = lastAccountRes.rows;
+
+    res.status(200).json({
+      status: 'success',
+      availableBalance,
+      totalIncome,
+      totalExpense,
+      chartData: data,
+      lastAccount,
+      lastTransaction
+    });
   } catch (error) {
     // Server-side error
     console.log(error);
@@ -142,6 +164,14 @@ export const addTransaction = async (req, res) => {
     // Extract account id from the request parameters
     const { account_id } = req.params;
     const { description, source, amount } = req.body;
+
+    // Validate userId
+    if (!userId) {
+      return res.status(403).json({
+        status: 'failed',
+        message: 'Invalid user ID!',
+      });
+    }
 
     // Validate required fields
     if (!(amount && description && source)) {
@@ -212,8 +242,6 @@ export const addTransaction = async (req, res) => {
   }
 };
 
-
-
 /**
  * Transfer money to another account
  * @param {Object} req - Express request object
@@ -221,84 +249,109 @@ export const addTransaction = async (req, res) => {
  */
 export const transferMoneyToAccount = async (req, res) => {
   try {
-    const {userId} = req.body.user
-    const {from_account , to_account , amount}  = req.body
-     if (!(from_account || to_account || amount)){
-        return  res.status(403).json({
-          status: 'failed',
-          message: "provide the required fields!",
-        });
-     }
-     const newAmount = Number(amount)
+    
+    const { userId } = req.body.user;
+    const { from_account, to_account, amount } = req.body;
 
-     if (newAmount <= 0){
-     return res.status(403).json({
+    // Validate userId
+    if (!userId) {
+      return res.status(403).json({
         status: 'failed',
-        message: "the amount should be greater than 0!",
+        message: 'Invalid user ID!',
       });
-     }
-      const frmAccountRes= await db.query("select * from tblaccount where id = $1",
-        [from_account]  
-      )
+    }
 
-      const fromAccount = frmAccountRes.rows[0]
-
-      if (!fromAccount){
-        return  res.status(404).json({
-          status: 'failed',
-          message: 'the account is not exists!',
-        });
-      }
-      if (fromAccount.account_balance < newAmount || fromAccount.account_balance <= 0){
-        return res.status(403).json({
-          status: 'failed',
-          message: 'Transaction failed. Insufficient account balance.',
-        });
-      }
-
-      const toAccountRes = await db.query("select * from tblaccount where id = $1",
-        [to_account]
-      )
-
-      const toAccount = toAccountRes.rows[0]
-
-      if (!toAccount){
-        return res.status(404).json({
-          status: 'failed',
-          message: 'the account is not exists!',
-        });
-      }
-      await db.query("BEGIN")
-
-      await db.query("UPDATE tblaccount SET account_balance = account_balance - $1, updatedAt = CURRENT_TIMESTAMP WHERE id = $2",
-        [newAmount, from_account]
-      );
-
-      await db.query("UPDATE tblaccount SET account_balance = account_balance + $1, updatedAt = CURRENT_TIMESTAMP WHERE id = $2",
-        [newAmount, to_account]
-      );
-
-      const description1= `Transfer (${fromAccount.account_name} - ${toAccount.account_name})`
-
-      await db.query("INSERT INTO tbltransaction (user_id, description, source, amount, type, status, createdAt) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)",
-        [userId, description1, fromAccount.account_name, newAmount, "expense", "Completed"]
-      );
-      const description2= `Received (${fromAccount.account_name} - ${toAccount.account_name})`
-
-      await db.query("INSERT INTO tbltransaction (user_id, description, source, amount, type, status, createdAt) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)",
-        [userId, description2, toAccount.account_name, newAmount, "income", "Completed"]
-      );
-
-      await db.query("COMMIT")
-
-      res.status(200).json({
-        status: 'success',
-        message: 'Transaction successful',
+    // Validate required fields
+    if (!(from_account && to_account && amount)) {
+      return res.status(403).json({
+        status: 'failed',
+        message: "Provide the required fields!",
       });
+    }
 
+    const newAmount = Number(amount);
+
+    // Validate amount
+    if (newAmount <= 0) {
+      return res.status(403).json({
+        status: 'failed',
+        message: "The amount should be greater than 0!",
+      });
+    }
+
+    // Fetch from account information
+    const frmAccountRes = await db.query("SELECT * FROM tblaccount WHERE id = $1", [from_account]);
+    const fromAccount = frmAccountRes.rows[0];
+
+    // Validate from account information
+    if (!fromAccount) {
+      return res.status(404).json({
+        status: 'failed',
+        message: 'The account does not exist!',
+      });
+    }
+
+    // Validate from account balance
+    if (fromAccount.account_balance < newAmount || fromAccount.account_balance <= 0) {
+      return res.status(403).json({
+        status: 'failed',
+        message: 'Transaction failed. Insufficient account balance.',
+      });
+    }
+
+    // Fetch to account information
+    const toAccountRes = await db.query("SELECT * FROM tblaccount WHERE id = $1", [to_account]);
+    const toAccount = toAccountRes.rows[0];
+
+    // Validate to account information
+    if (!toAccount) {
+      return res.status(404).json({
+        status: 'failed',
+        message: 'The account does not exist!',
+      });
+    }
+
+    // Start a new database transaction
+    await db.query("BEGIN");
+
+    // Update from account balance
+    await db.query(
+      "UPDATE tblaccount SET account_balance = account_balance - $1, updatedAt = CURRENT_TIMESTAMP WHERE id = $2",
+      [newAmount, from_account]
+    );
+
+    // Update to account balance
+    await db.query(
+      "UPDATE tblaccount SET account_balance = account_balance + $1, updatedAt = CURRENT_TIMESTAMP WHERE id = $2",
+      [newAmount, to_account]
+    );
+
+    const description1 = `Transfer (${fromAccount.account_name} - ${toAccount.account_name})`;
+
+    // Insert transaction for from account
+    await db.query(
+      "INSERT INTO tbltransaction (user_id, description, source, amount, type, status, createdAt) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)",
+      [userId, description1, fromAccount.account_name, newAmount, "expense", "Completed"]
+    );
+
+    const description2 = `Received (${fromAccount.account_name} - ${toAccount.account_name})`;
+
+    // Insert transaction for to account
+    await db.query(
+      "INSERT INTO tbltransaction (user_id, description, source, amount, type, status, createdAt) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)",
+      [userId, description2, toAccount.account_name, newAmount, "income", "Completed"]
+    );
+
+    // Commit the transaction
+    await db.query("COMMIT");
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Transaction successful',
+    });
   } catch (error) {
     // Server-side error
-    await db.query("ROLLBACK")
+    await db.query("ROLLBACK");
     console.log(error);
     res.status(500).json({
       status: 'failed',

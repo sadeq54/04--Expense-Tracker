@@ -1,7 +1,7 @@
 import express from "express"
 import { authMiddleware } from "../middleware/autheMiddleware.js";
 import {getTransactions, getDashBoardInformation, addTransaction , transferMoneyToAccount} from "../controllers/transactionController.js"
-const router = express.Router();
+const   router = express.Router();
 
 // get all the transactions 
 router.get("/", authMiddleware, getTransactions);
